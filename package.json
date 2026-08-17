@@ -1,0 +1,34 @@
+{
+  "name": "@codelittinc/carbon-access",
+  "version": "0.1.0",
+  "description": "The Carbon application registry and the access checks every internal app shares.",
+  "license": "UNLICENSED",
+  "private": false,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codelittinc/carbon-access.git"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.10"
+  },
+  "packageManager": "pnpm@10.23.0",
+  "engines": {
+    "node": ">=22"
+  }
+}
