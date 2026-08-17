@@ -98,6 +98,13 @@ silently, because a check that throws is a check one bad metadata edit can turn
 into an outage. That behaviour is the reason this package has tests; the happy
 path is exercised by running the apps.
 
+That includes prototype-chain keys. Clerk stores metadata as JSON, and
+`JSON.parse('{"__proto__":"admin"}')` produces an own enumerable `__proto__`, so
+registry membership is tested with `Object.hasOwn` rather than the `in` operator
+— `in` accepted every member of `Object.prototype` as an application id and then
+threw looking up its roles. Do not change those checks back to `in`; the tests
+name each key explicitly.
+
 ## Adding an application
 
 1. Add an entry to `src/applications.ts` with the roles it actually enforces,

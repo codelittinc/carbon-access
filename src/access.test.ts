@@ -9,7 +9,7 @@ import {
   withoutApp,
   type AccessMap,
 } from './access';
-import { applications, isValidRole } from './applications';
+import { applications, isAppId, isValidRole } from './applications';
 
 /**
  * These are the tests that matter, because every one of them describes a way a
@@ -194,5 +194,99 @@ describe('withRole / withoutApp', () => {
     // do nothing.
     const written = withRole({}, 'player-scoreboard', 'admin');
     expect(readAccess({ access: written })).toEqual(written);
+  });
+});
+
+/**
+ * Prototype-chain keys.
+ *
+ * `isAppId` used the `in` operator, which walks the prototype chain, so every
+ * member of `Object.prototype` was accepted as an application id; `isValidRole`
+ * then read `.roles` off `Object.prototype` (or off the `Object` constructor,
+ * or a function) and threw on `undefined.includes`.
+ *
+ * Not a hypothetical shape. Clerk stores metadata as JSON, and
+ * `JSON.parse('{"__proto__":"admin"}')` yields an OWN enumerable `__proto__`
+ * that `Object.entries` hands straight to the loop in `readAccess`.
+ *
+ * It broke both guarantees at once: the throw took the user's *valid* grants
+ * with it, and an authorization check became a 500 rather than a denial — so one
+ * bad edit in the Clerk dashboard was an outage on every gated page.
+ */
+describe('prototype-chain keys are not application ids', () => {
+  // Everything reachable on Object.prototype, plus the two the JSON path makes
+  // easiest to inject.
+  const POLLUTED = [
+    '__proto__',
+    'constructor',
+    'prototype',
+    'toString',
+    'toLocaleString',
+    'valueOf',
+    'hasOwnProperty',
+    'isPrototypeOf',
+    'propertyIsEnumerable',
+    '__defineGetter__',
+    '__lookupGetter__',
+  ];
+
+  it.each(POLLUTED)('rejects %s as an application id', (key) => {
+    expect(isAppId(key)).toBe(false);
+  });
+
+  it.each(POLLUTED)('readAccess drops %s without throwing', (key) => {
+    expect(() => readAccess({ access: { [key]: 'admin' } })).not.toThrow();
+    expect(readAccess({ access: { [key]: 'admin' } })).toEqual({});
+  });
+
+  it.each(POLLUTED)('unknownGrants reports %s without throwing', (key) => {
+    expect(() => unknownGrants({ access: { [key]: 'admin' } })).not.toThrow();
+    expect(unknownGrants({ access: { [key]: 'admin' } })).toEqual([
+      { app: key, role: 'admin' },
+    ]);
+  });
+
+  it('does not let a polluted key cost the user their real grants', () => {
+    // The regression that mattered: the throw discarded everything, so a user
+    // with legitimate access lost it because of an unrelated junk key.
+    const access = readAccess({
+      access: { __proto__: 'admin', 'player-scoreboard': 'admin' },
+    });
+    expect(access).toEqual({ 'player-scoreboard': 'admin' });
+  });
+
+  it('survives the exact JSON shape Clerk would store', () => {
+    const metadata = JSON.parse(
+      '{"access":{"__proto__":"admin","access-manager":"admin"}}',
+    );
+    // Proof the key really is own+enumerable, so the loop does visit it.
+    expect(Object.prototype.hasOwnProperty.call(metadata.access, '__proto__')).toBe(
+      true,
+    );
+    expect(readAccess(metadata)).toEqual({ 'access-manager': 'admin' });
+  });
+
+  it.each(POLLUTED)('isValidRole answers false for %s rather than throwing', (key) => {
+    // Exported, so reachable with a cast even once readAccess is correct.
+    expect(() => isValidRole(key as never, 'admin')).not.toThrow();
+    expect(isValidRole(key as never, 'admin')).toBe(false);
+  });
+
+  it('withRole refuses a polluted key with an explanatory error, not a TypeError', () => {
+    let err: unknown;
+    try {
+      withRole({}, '__proto__' as never, 'admin' as never);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).constructor.name).toBe('Error');
+    expect((err as Error).message).toMatch(/not a role of __proto__/);
+  });
+
+  it('never returns an object whose prototype was replaced', () => {
+    const access = readAccess({ access: { __proto__: { polluted: true } } });
+    expect(Object.getPrototypeOf(access)).toBe(Object.prototype);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });

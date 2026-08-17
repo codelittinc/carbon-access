@@ -1,6 +1,6 @@
 {
   "name": "@codelittinc/carbon-access",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The Carbon application registry and the access checks every internal app shares.",
   "license": "UNLICENSED",
   "private": false,

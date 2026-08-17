@@ -66,8 +66,27 @@ export const applicationList = Object.entries(applications).map(([id, definition
   ...definition,
 }));
 
+/**
+ * Whether `value` names an application in the registry.
+ *
+ * `Object.hasOwn`, NOT the `in` operator. `in` walks the prototype chain, so it
+ * answers true for every member of `Object.prototype` — `__proto__`,
+ * `constructor`, `toString`, `valueOf`, `hasOwnProperty` and the rest. Those are
+ * reachable keys, not a hypothetical: Clerk stores metadata as JSON, and
+ * `JSON.parse('{"__proto__":"admin"}')` produces an OWN enumerable `__proto__`
+ * that `Object.entries` duly hands to this function.
+ *
+ * With `in`, such a key was accepted as an application id, `isValidRole` then
+ * looked up `applications['__proto__'].roles` — `undefined` on
+ * `Object.prototype` — and threw. That broke the two guarantees this package is
+ * built on at once: a junk entry took the user's *valid* grants down with it,
+ * and an authorization check became a 500 instead of a denial. One bad
+ * administrative edit in the Clerk dashboard was an outage on every gated page.
+ *
+ * Do not "simplify" this back to `in`.
+ */
 export function isAppId(value: unknown): value is AppId {
-  return typeof value === 'string' && value in applications;
+  return typeof value === 'string' && Object.hasOwn(applications, value);
 }
 
 /**
@@ -77,10 +96,15 @@ export function isAppId(value: unknown): value is AppId {
  * them honest with each other: a role the Access Manager refuses to write is
  * also one a consuming app would refuse to read, so there is no way to end up
  * with a grant that is stored but inert.
+ *
+ * Re-checks the application itself rather than trusting the `AppId` type. This
+ * is exported, so a caller with a cast — or a `readAccess` regression — can
+ * reach it with a prototype key, and this must answer `false` rather than throw
+ * on the missing `.roles`. Belt and braces on purpose: the cost is one property
+ * lookup, and the failure it prevents is an outage.
  */
 export function isValidRole(app: AppId, role: unknown): boolean {
-  return (
-    typeof role === 'string' &&
-    (applications[app].roles as readonly string[]).includes(role)
-  );
+  if (typeof role !== 'string') return false;
+  if (!Object.hasOwn(applications, app)) return false;
+  return (applications[app].roles as readonly string[]).includes(role);
 }

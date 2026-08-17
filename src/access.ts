@@ -69,7 +69,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 function rawAccess(source: unknown): Record<string, unknown> | null {
   if (!isPlainObject(source)) return null;
-  if ('access' in source) {
+  // `Object.hasOwn`, not `in`: `source` is untrusted, and `in` would consult its
+  // prototype chain. Same reasoning as `isAppId` — see the note there.
+  if (Object.hasOwn(source, 'access')) {
     return isPlainObject(source.access) ? source.access : null;
   }
   return source;
@@ -79,7 +81,7 @@ function rawAccess(source: unknown): Record<string, unknown> | null {
 // make a bare access map indistinguishable from a wrapper, and the failure
 // would be a silent denial for that one app rather than anything that looks
 // like a bug. Cheap to assert at module load; impossible to debug later.
-if ('access' in applications) {
+if (Object.hasOwn(applications, 'access')) {
   throw new Error(
     "An application may not be called 'access' — it collides with the metadata " +
       'field and the session claim of the same name.',
@@ -160,9 +162,15 @@ export function withRole<A extends AppId>(
   role: RoleOf<A>,
 ): AccessMap {
   if (!isValidRole(app, role)) {
+    // The message reads the registry defensively. `app` is typed, but a caller
+    // with a cast can land here with a prototype key, and `applications[app]`
+    // would then be `undefined` — making the *error path* throw a TypeError
+    // instead of this explanatory Error.
+    const known = Object.hasOwn(applications, app)
+      ? applications[app].roles.join(', ')
+      : '(unknown application)';
     throw new Error(
-      `${String(role)} is not a role of ${app}. Valid roles: ` +
-        `${applications[app].roles.join(', ')}.`,
+      `${String(role)} is not a role of ${String(app)}. Valid roles: ${known}.`,
     );
   }
   return { ...access, [app]: role };
