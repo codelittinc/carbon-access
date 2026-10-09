@@ -125,6 +125,51 @@ every app, whatever its stack.
     "who changed what, when", record it in your own store, written inside the
     lock from rule 4.
 
+## Preferences
+
+Per-app user settings live in their **own map**, next to `access` and never
+inside it. The first one is the theme.
+
+```jsonc
+// publicMetadata
+{
+  "access": { "player-scoreboard": { "roles": ["admin"], "status": "active" } },
+  "preferences": { "player-scoreboard": { "theme": "light" } },
+}
+```
+
+| Field   | Meaning                                                                              |
+| ------- | ------------------------------------------------------------------------------------ |
+| key     | The same app slug as in `access`. Settings are per app, so an app has its own theme. |
+| `theme` | `light` or `dark`. A missing or unreadable value means "no choice yet".              |
+
+**Why a separate map.** Access is validated strictly and fails closed (rule 6).
+A preference must fail soft. If preferences lived inside the access entry, a bad
+theme value could make the whole entry unreadable and lock the person out.
+
+Rules, in addition to the access rules:
+
+1. **Write only your own key**, with `updateUserMetadata` from a server action
+   or route that has checked who is signed in. Write to that user's own id,
+   taken from the session and never from input. Validate the value before
+   writing. Never use `unsafeMetadata`: it can't be merged from the browser, so
+   apps would overwrite each other's settings.
+2. **Read it the same way as access**, from the user record you already fetch
+   per request. Never put it in the session token.
+3. **Validate only your own entry, and fail soft.** If it is missing or
+   malformed, use the default. Never report it as an error, never refuse
+   anything because of it, and never use it in an access decision.
+4. **Theme default:** use the stored value; with none, follow the OS
+   (`prefers-color-scheme`), and dark if the browser reports nothing. A local
+   cache such as `localStorage` may mirror the stored value but must never
+   override the OS when nothing is stored.
+5. **Debounce writes.** Preference writes share the per-user write limit with
+   access writes (about 5 per 10s). Combine rapid changes so a user sends at
+   most about 2 writes per 3 seconds. On a `429`, keep the change locally and
+   retry once after at least 10s.
+6. **Write only when the user changes something.** Never write on page load,
+   and skip a write that matches the stored value.
+
 ## Limits
 
 These were measured on our instances, or taken from
