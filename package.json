@@ -1,7 +1,7 @@
 {
   "name": "@codelittinc/carbon-access",
-  "version": "0.1.1",
-  "description": "The Carbon application registry and the access checks every internal app shares.",
+  "version": "0.2.0",
+  "description": "The contract every Carbon app follows to store per-app access on the shared Clerk user.",
   "license": "UNLICENSED",
   "private": false,
   "type": "module",
@@ -9,23 +9,12 @@
     "type": "git",
     "url": "git+https://github.com/codelittinc/carbon-access.git"
   },
-  "exports": {
-    ".": "./src/index.ts"
-  },
-  "files": [
-    "src"
-  ],
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "prettier": "^3.9.6",
-    "typescript": "^5.8.3",
-    "vitest": "^4.1.10"
+    "prettier": "^3.9.6"
   },
   "packageManager": "pnpm@10.23.0",
   "engines": {

@@ -1,136 +1,166 @@
 # @codelittinc/carbon-access
 
-The registry of Carbon applications, and the access checks every internal app
-shares. Authorization for the Carbon fleet lives on the Clerk user, as one field:
+The contract every Carbon app follows to store **who may use it** on the shared
+Clerk user, instead of in its own database.
 
-```json
-{ "access": { "player-scoreboard": "admin", "access-manager": "admin" } }
-```
+All Carbon apps on one apex domain sign in through one Clerk instance, so one
+person's access to every app can live in one place: their Clerk user's metadata.
+Each app keeps its own entry, manages it from its own admin screen, and reads it
+on every request.
 
-Clerk projects that field into the session token as the `access` claim, so an app
-reads a user's grants with no API call. An application not present in `access`
-cannot be reached.
+> **Status: spec only.** This repo currently holds the contract, not code. The
+> reference implementation is being built in Player Scoreboard
+> ([player-scoreboard-v2#54](https://github.com/codelittinc/player-scoreboard-v2/issues/54)).
+> Once that has run in production, its shareable module moves here as a
+> TypeScript package. Until then, follow this document.
+>
+> Versions up to `0.1.1` held an earlier design: a plain role string per app,
+> read from a session claim and written only by a central Access Manager. That
+> design was abandoned and **must not be used**. It remains in the git history.
 
-Grants are made in the **Access Manager** ([codelittinc/carbon-gatekeeper](https://github.com/codelittinc/carbon-gatekeeper)),
-which is the only thing that writes them. This package only _reads_ — plus the
-pure transforms the Access Manager uses to compute what to write.
+## Why this repo is public
 
-```
-publicMetadata.access   ← written only by the Access Manager (Clerk Backend API)
-      ↓  {{user.public_metadata.access}}
-session claim `access`  ← read by every app, zero API calls
-      ↓
-roleFor(sessionClaims, 'player-scoreboard')
-```
+Apps must be able to install the package with **no credentials**, in GitHub Actions
+and inside `docker build`. A `github:` dependency on a private repo needs a key in
+every builder; a public one resolves as a plain tarball, the same way
+`@codelittinc/carbon-design-system` does.
 
-## Why this is a separate, public repo
+**Keep it that way.** Nothing committed here may be sensitive: no keys, no
+credentials, no hostnames, no user data. Enforcement happens inside Clerk:
+`publicMetadata` can only be written through the Backend API with a secret key.
 
-It has to be installable by every Carbon app with **no credentials**, in GitHub
-Actions and inside `docker build` alike. A `github:` dependency on a _private_
-repo falls back to `git clone` and needs an SSH key or a cross-repo token in
-every builder — which also breaks the property those repos rely on, that a build
-needs no secrets at all. A public repo resolves as a plain tarball from
-`codeload.github.com`, which is how `@codelittinc/carbon-design-system` already
-works.
-
-Nothing here is sensitive: no keys, no credentials, no hostnames, no user data.
-The registry is a list of internal application ids, display names and role names,
-and knowing one grants nothing — enforcement is Clerk-side, and
-`publicMetadata` is writable only through the Backend API with
-`CLERK_SECRET_KEY`.
-
-**Keep it that way.** This repo is public, so anything committed here is public.
-Application descriptions should stay bland; the `id` is the only load-bearing
-part. If an application should not be publicly known to exist, do not add it —
-raise it with the Access Manager's owners instead.
-
-## Install
+## The shape
 
 ```jsonc
-"@codelittinc/carbon-access": "github:codelittinc/carbon-access#<sha>"
+// publicMetadata: readable by the signed-in user, writable only by a backend
+{
+  "access": {
+    "player-scoreboard": { "roles": ["admin"], "status": "active" },
+    "some-other-app":    { "roles": ["viewer", "editor"], "status": "invited" }
+  }
+}
+
+// privateMetadata: backend-only
+{
+  "access": {
+    "player-scoreboard": {
+      "invitedBy": "someone@carboncrei.com",   // an email, "seed", or null for legacy data
+      "firstSignInAt": "2026-10-09T12:00:00Z"  // ISO timestamp, or null if they haven't visited
+    }
+  }
+}
 ```
 
-Pin a **SHA**, not a branch — same discipline as the design system. Unpinned, the
-set of valid roles could change under a deployed app without a deploy, and the
-symptom of that is people losing access.
+| Field                     | Meaning                                                                                                                                        |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| key (`player-scoreboard`) | The app's id: kebab-case, the same on every Clerk instance. Use the same slug the app already uses elsewhere, such as its analytics `app` tag. |
+| `roles`                   | The app's own role words. The app owns this vocabulary; nothing here constrains it.                                                            |
+| `status`                  | `invited` (granted, never visited), `active` (has visited) or `revoked`.                                                                       |
+| no key                    | The person never had access to that app.                                                                                                       |
 
-The package ships TypeScript source rather than a build, so bundlers need to be
-told to compile it:
+`revoked` keeps `roles`, so restoring someone gives back the role they had.
+Telling `revoked` apart from "no key", and `invited` apart from `active`, is what
+lets an admin screen offer Restore and show who has never signed in.
 
-```ts
-// next.config.ts
-transpilePackages: ['@codelittinc/carbon-access'],
-```
+## Rules
 
-Express/`tsx` apps need nothing.
+Each rule exists because breaking it causes a specific failure. They apply to
+every app, whatever its stack.
 
-## Use
+### Writing
 
-```ts
-import { roleFor } from '@codelittinc/carbon-access';
+1. **Write only your own key**, in both public and private metadata.
+2. **Always use `updateUserMetadata`**, which deep-merges. Never use
+   `replaceUserMetadata`, which wipes every other app's entry. Remove a key by
+   setting it to `null`. Arrays are replaced whole, which is what `roles` needs.
+3. **Never use `unsafeMetadata`.** The user can write to it from their own browser.
+4. **Serialise your own access changes.** Clerk has no conditional write, so two
+   admins acting at once can each read a stale state. Take a lock, such as a
+   Postgres advisory lock or whatever your stack has. Then re-read the Clerk user
+   inside the lock, decide, and write. This is what makes rules like "you can't
+   revoke the last admin" hold.
 
-const { userId, sessionClaims } = await auth(); // @clerk/nextjs/server
-if (!userId) return denied('signed-out');
+### Reading
 
-const role = roleFor(sessionClaims, 'player-scoreboard');
-if (!role) return denied('no-access');
-```
+5. **Read through the Backend API on every request**, with `currentUser()` or
+   `getUser()`, deduplicated per request. **Do not put `access` in the session
+   token.** It is too big for it: about 2.5KB at 30 apps, against Clerk's guidance
+   of about 1.2KB for custom claims, because the token lives in a cookie. A revoke
+   would also wait for the token to refresh.
+6. **Validate only your own entry, and fail closed.** If your entry isn't an
+   object, `roles` isn't an array of roles you know, or `status` isn't one of the
+   three values, refuse access and report an error. Never judge another app's
+   entry, whatever its shape.
+7. **A Clerk error is "can't check", never "allowed".** That includes a `429`.
+   Show a "can't check your access right now" screen, and never retry in a loop
+   while serving a request.
+8. **Match people on verified email addresses only.** Otherwise someone could
+   claim access by adding another person's address, unverified, to their own
+   account.
 
-`roleFor` also accepts a Clerk user's raw `publicMetadata`, so the same function
-serves the free claim-based check and an authoritative Backend API read.
+### Lifecycle
 
-|                                   |                                         |
-| --------------------------------- | --------------------------------------- |
-| `readAccess(source)`              | every valid grant, as `{ appId: role }` |
-| `roleFor(source, app)`            | that app's role, or `null`              |
-| `hasAccess(source, app)`          | any role at all                         |
-| `hasRole(source, app, role)`      | exactly this role                       |
-| `unknownGrants(source)`           | grants naming something unrecognised    |
-| `withRole(access, app, role)`     | pure — `access` plus that grant         |
-| `withoutApp(access, app)`         | pure — `access` minus that app          |
-| `applications`, `applicationList` | the registry                            |
-| `isAppId`, `isValidRole`          | registry membership                     |
+9. **First visit.** When an `invited` user first reaches the app, the app itself
+   sets `status: "active"` and `firstSignInAt`. Each app writes its own change:
+   signing in to one Carbon app says nothing about having visited another.
+10. **Inviting someone who already has a Clerk user:** write the entry directly.
+11. **Inviting someone who doesn't:** call
+    `createInvitation({ notify: false, ignoreExisting: true })` with your public
+    entry. Clerk copies an invitation's metadata to the user only when they sign
+    up **through the invitation link**. So:
+    - show the admin the invitation link to send on;
+    - on first sign-in, adopt any pending invitation for the user's verified email
+      that carries your key: write the entry, then revoke the invitation.
 
-**Every read fails closed.** A grant whose application is not in the registry,
-whose role that application does not declare, or that is not a string is dropped
-— individually, so one junk entry cannot cost a user their other grants, and
-silently, because a check that throws is a check one bad metadata edit can turn
-into an outage. That behaviour is the reason this package has tests; the happy
-path is exercised by running the apps.
+    Invitations can't carry `privateMetadata` and can't be edited. Keep
+    `invitedBy` in your audit log until the person activates. To restore a
+    revoked invitee, create a new invitation.
 
-That includes prototype-chain keys. Clerk stores metadata as JSON, and
-`JSON.parse('{"__proto__":"admin"}')` produces an own enumerable `__proto__`, so
-registry membership is tested with `Object.hasOwn` rather than the `in` operator
-— `in` accepted every member of `Object.prototype` as an application id and then
-threw looking up its roles. Do not change those checks back to `in`; the tests
-name each key explicitly.
+12. **Audit is yours.** Clerk keeps no history of metadata changes. If you need
+    "who changed what, when", record it in your own store, written inside the
+    lock from rule 4.
 
-## Adding an application
+## Limits
 
-1. Add an entry to `src/applications.ts` with the roles it actually enforces,
-   **least privileged first** — the Access Manager selects the first entry when
-   access is granted, so the order decides what a slipped toggle grants.
-2. Merge, then pin the new SHA in the consuming app.
+These were measured on our instances, or taken from
+[Clerk's rate-limit docs](https://clerk.com/docs/backend-requests/resources/rate-limits).
+All Carbon instances are Clerk **production** instances.
 
-Removing an entry does not clear anyone's Clerk metadata. Those grants stop being
-_readable_, which is the fail-closed direction; the Access Manager shows them as
-unrecognised leftovers rather than hiding them.
+| Limit                    | Scope                                      | What it means                                                              |
+| ------------------------ | ------------------------------------------ | -------------------------------------------------------------------------- |
+| 8KB                      | **each** metadata type separately (tested) | At 30 apps, public is about 2.5KB and private about 3.5KB. Plenty of room. |
+| 1000 requests / 10s      | per instance, **shared by every app**      | One read per admin request is fine. Don't poll Clerk.                      |
+| 10 metadata writes / 10s | per user                                   | One write per change.                                                      |
+| 100 invitations / hour   | per instance, **shared by every app**      | Never create invitations in bulk from a migration.                         |
 
-## One manual step, once per Clerk instance
+A throttled request returns `429` with a `Retry-After` header. Request handlers
+treat it as a failure (rule 7). Scripts wait for `Retry-After`, then retry.
 
-The claim has no API. Clerk Dashboard → **Sessions → Customize session token →
-Claims**:
+## Moving an app onto this
 
-```json
-{ "access": "{{user.public_metadata.access}}" }
-```
+1. **Choose the key and the role words.**
+2. **Write a one-off migration script**, run per Clerk instance, that copies your
+   existing allowlist into metadata. It must:
+   - be idempotent, so a second run writes nothing;
+   - be a dry run by default, writing only when you pass a flag;
+   - do **one** paged user scan (`limit=500`) and match emails locally, not one
+     lookup per row;
+   - never overwrite an entry that already exists: report it as a conflict;
+   - report an email that matches more than one Clerk user as ambiguous, and
+     write nothing for it;
+   - report rows with no Clerk user, without creating invitations or sending
+     email;
+   - check which instance it is talking to by decoding the host from the
+     publishable key. **The `sk_live` / `sk_test` prefix doesn't tell you**:
+     every Carbon instance, development included, uses live keys.
+3. **Switch the gate** to the reading rules above.
+4. **Keep writing the old table for one release** if you want a safe rollback.
+   Then drop it.
 
-Carbon runs one Clerk application per apex, so this is per instance, and **grants
-do not follow across apexes** — `carbonresidential.dev` and
-`carbonresidential.com` hold separate user records for the same person. An
-instance without the claim mints tokens carrying no `access`, every app reads "no
-grants", and everyone is locked out — while the Access Manager still appears to
-save correctly, because it is.
+## Prior art
 
-Full walkthrough, including a copy-paste `lib/auth.ts` for Next.js and Express:
-[`docs/integrating.md`](https://github.com/codelittinc/carbon-gatekeeper/blob/main/docs/integrating.md).
+- Versions `0.1.x` of this repo, and
+  [player-scoreboard-v2#30](https://github.com/codelittinc/player-scoreboard-v2/pull/30),
+  held the abandoned string-grant design.
+- [player-scoreboard-v2#54](https://github.com/codelittinc/player-scoreboard-v2/issues/54)
+  is the current design and its reference implementation.
