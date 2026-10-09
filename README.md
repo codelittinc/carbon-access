@@ -130,11 +130,17 @@ All Carbon instances are Clerk **production** instances.
 | ------------------------ | ------------------------------------------ | -------------------------------------------------------------------------- |
 | 8KB                      | **each** metadata type separately (tested) | At 30 apps, public is about 2.5KB and private about 3.5KB. Plenty of room. |
 | 1000 requests / 10s      | per instance, **shared by every app**      | One read per admin request is fine. Don't poll Clerk.                      |
-| 10 metadata writes / 10s | per user                                   | One write per change.                                                      |
+| ~5 metadata writes / 10s | per user (measured; Clerk documents 10)    | One write per change. Never write the same user in a loop.                 |
 | 100 invitations / hour   | per instance, **shared by every app**      | Never create invitations in bulk from a migration.                         |
 
-A throttled request returns `429` with a `Retry-After` header. Request handlers
-treat it as a failure (rule 7). Scripts wait for `Retry-After`, then retry.
+A throttled request returns `429` with a `Retry-After` header. On the per-user
+write limit we measured `Retry-After: 0`, so don't trust it. Request handlers
+treat a `429` as a failure (rule 7). Scripts wait for `Retry-After`, or at least
+10 seconds when it is `0` or missing, then retry.
+
+Reads are consistent: `GET /users/{id}` and the user list return a metadata
+write on the very next read (measured: 0 stale reads in 17 rounds). Re-reading
+inside your lock (rule 4) therefore always sees the latest state.
 
 ## Moving an app onto this
 
