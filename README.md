@@ -44,7 +44,7 @@ credentials, no hostnames, no user data. Enforcement happens inside Clerk:
 {
   "access": {
     "player-scoreboard": {
-      "invitedBy": "someone@carboncrei.com",   // an email, "seed", or null for legacy data
+      "invitedBy": "someone@example.com",      // an email, "seed", or null for legacy data
       "firstSignInAt": "2026-10-09T12:00:00Z"  // ISO timestamp, or null if they haven't visited
     }
   }
