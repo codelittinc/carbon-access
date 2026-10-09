@@ -1,5 +1,12 @@
 # @codelittinc/carbon-users-metadata
 
+> **Deprecated (2026-10-09).** CarbonOS access and preferences are moving to
+> **Gatekeeper**, which becomes the source of truth; Clerk stays identity only.
+> Don't build new work on this contract. See
+> [codelittinc/carbon-gatekeeper#118](https://github.com/codelittinc/carbon-gatekeeper/issues/118).
+> This repository is archived once Player Scoreboard has moved off Clerk
+> metadata ([player-scoreboard-v2#58](https://github.com/codelittinc/player-scoreboard-v2/issues/58)).
+
 The contract every Carbon app follows for what it stores on the shared Clerk
 user: **who may use it** (`access`) and, as they are added, the user's
 per-app settings (`preferences`). Both live on the Clerk user instead of in each
