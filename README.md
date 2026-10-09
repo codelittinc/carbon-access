@@ -1,7 +1,12 @@
-# @codelittinc/carbon-access
+# @codelittinc/carbon-users-metadata
 
-The contract every Carbon app follows to store **who may use it** on the shared
-Clerk user, instead of in its own database.
+The contract every Carbon app follows for what it stores on the shared Clerk
+user: **who may use it** (`access`) and, as they are added, the user's
+per-app settings (`preferences`). Both live on the Clerk user instead of in each
+app's own database.
+
+> Renamed from `carbon-access` on 2026-10-09, when per-app preferences joined
+> access. GitHub redirects the old URL.
 
 All Carbon apps on one apex domain sign in through one Clerk instance, so one
 person's access to every app can live in one place: their Clerk user's metadata.
