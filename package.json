@@ -1,13 +1,13 @@
 {
-  "name": "@codelittinc/carbon-access",
+  "name": "@codelittinc/carbon-users-metadata",
   "version": "0.2.0",
-  "description": "The contract every Carbon app follows to store per-app access on the shared Clerk user.",
+  "description": "The contract every Carbon app follows for what it stores on the shared Clerk user: access and per-app preferences.",
   "license": "UNLICENSED",
   "private": false,
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/codelittinc/carbon-access.git"
+    "url": "git+https://github.com/codelittinc/carbon-users-metadata.git"
   },
   "scripts": {
     "format": "prettier --write .",
